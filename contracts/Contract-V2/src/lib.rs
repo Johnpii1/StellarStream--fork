@@ -10,8 +10,8 @@ mod v1_interface;
 
 use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, BatchStreamsCreatedEvent, ContractPausedEvent, ContractUnpausedEvent, MigrationEvent, PermitArgs, PermitStreamCreatedEvent, StreamArgs,
-    StreamCancelledV2Event, StreamClaimV2Event, StreamCreatedV2Event, StreamMigratedEvent,
+    AdminTransferredEvent, BatchStreamsCreatedEvent, ClawbackRebalanceEvent, ContractPausedEvent, ContractUnpausedEvent, MigrationEvent, PermitArgs, PermitStreamCreatedEvent, StreamArgs,
+    StreamCancelledV2Event, StreamClaimV2Event, StreamCreatedV2Event, StreamMigratedEvent, StreamToppedUpEvent,
     StreamV2,
 };
 use v1_interface::Client as V1Client;
@@ -511,6 +511,76 @@ impl Contract {
 
     pub fn is_paused(env: Env) -> bool {
         storage::is_paused(&env)
+    }
+
+    // ----------------------------------------------------------------
+    // Compliance: Asset "Clawback" Support Logic
+    // ----------------------------------------------------------------
+
+    /// Compare the actual token balance in the contract with the sum of all
+    /// active stream remaining balances.
+    /// Returns (contract_balance, total_remaining_in_streams).
+    pub fn check_balance_integrity(env: Env, token: Address) -> (i128, i128) {
+        let total_streams = storage::get_health(&env).total_v2_streams;
+        let mut sum_remaining: i128 = 0;
+
+        for i in 0..total_streams {
+            if let Some(stream) = storage::get_stream(&env, i) {
+                if !stream.cancelled && stream.token == token {
+                    let remaining = stream.total_amount.saturating_sub(stream.withdrawn_amount);
+                    sum_remaining = sum_remaining.saturating_add(remaining);
+                }
+            }
+        }
+
+        let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+
+        (contract_balance, sum_remaining)
+    }
+
+    /// Proportionally reduce all active streams for a token if the contract
+    /// balance is less than the total committed amount (e.g. after a clawback).
+    /// Only the contract admin can trigger this.
+    pub fn rebalance_after_clawback(env: Env, token: Address) -> Result<(), ContractError> {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+
+        let (balance, sum_remaining) = Self::check_balance_integrity(env.clone(), token.clone());
+
+        if balance >= sum_remaining || sum_remaining == 0 {
+            return Ok(());
+        }
+
+        // reduction_factor_bps = (balance * 10000) / sum_remaining
+        let reduction_factor_bps = (balance * 10000) / sum_remaining;
+
+        let total_streams = storage::get_health(&env).total_v2_streams;
+        for i in 0..total_streams {
+            if let Some(mut stream) = storage::get_stream(&env, i) {
+                if !stream.cancelled && stream.token == token {
+                    let old_remaining = stream.total_amount.saturating_sub(stream.withdrawn_amount);
+                    let new_remaining = (old_remaining * reduction_factor_bps) / 10000;
+                    
+                    // New total = withdrawn + new_remaining
+                    stream.total_amount = stream.withdrawn_amount + new_remaining;
+                    storage::set_stream(&env, i, &stream);
+                }
+            }
+        }
+
+        env.events().publish(
+            (symbol_short!("rebalance"), token.clone()),
+            types::ClawbackRebalanceEvent {
+                token,
+                total_remaining: sum_remaining,
+                contract_balance: balance,
+                reduction_factor_bps,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
     }
 
     fn require_not_paused(env: &Env) -> Result<(), ContractError> {

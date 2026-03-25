@@ -184,3 +184,13 @@ pub struct StreamToppedUpEvent {
     pub new_end_time: u64,
     pub timestamp: u64,
 }
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ClawbackRebalanceEvent {
+    pub token: Address,
+    pub total_remaining: i128,
+    pub contract_balance: i128,
+    pub reduction_factor_bps: i128,
+    pub timestamp: u64,
+}
