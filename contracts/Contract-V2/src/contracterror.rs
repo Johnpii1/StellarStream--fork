@@ -57,4 +57,6 @@ pub enum Error {
     MissingDuration = 39,
     /// Invalid duration value in bridge metadata
     InvalidDuration = 40,
+    /// Contract is in emergency (withdraw-only) mode; new capital cannot enter
+    EmergencyMode = 41,
 }

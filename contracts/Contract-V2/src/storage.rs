@@ -89,6 +89,10 @@ pub enum DataKeyV2 {
     PendingStreamRequest(u64), // 13
     /// Counter for generating unique pending stream request IDs
     StreamRequestCount, // 14
+
+    // -- Emergency Mode (Issue #393) ---------------------------------
+    /// When true, create_stream and top_up are blocked; withdraw remains accessible.
+    Emergency, // 15
 }
 
 /// Global stream counter.
@@ -416,6 +420,26 @@ pub fn is_paused(env: &Env) -> bool {
 /// Sets the contract's paused state.
 pub fn set_paused(env: &Env, paused: bool) {
     env.storage().instance().set(&DataKeyV2::Paused, &paused);
+    bump_instance(env);
+}
+
+// ----------------------------------------------------------------
+// instance() helpers — Emergency Mode (Issue #393)
+// ----------------------------------------------------------------
+
+/// Returns true if the contract is in emergency (withdraw-only) mode.
+pub fn is_emergency(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKeyV2::Emergency)
+        .unwrap_or(false)
+}
+
+/// Sets the emergency mode state.
+pub fn set_emergency(env: &Env, active: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKeyV2::Emergency, &active);
     bump_instance(env);
 }
 

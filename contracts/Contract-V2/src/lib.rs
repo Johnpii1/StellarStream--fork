@@ -1187,6 +1187,7 @@ impl Contract {
         extra_amount: i128,
     ) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
+        Self::require_not_emergency(&env)?;
         sender.require_auth();
 
         if extra_amount <= 0 {
@@ -1321,6 +1322,37 @@ impl Contract {
     }
 
     // ----------------------------------------------------------------
+    // Issue #393 — Emergency (withdraw-only) Mode
+    // ----------------------------------------------------------------
+
+    /// Activate emergency mode: blocks create_stream and top_up while
+    /// leaving withdraw accessible so beneficiaries can always exit.
+    pub fn set_emergency_mode(env: Env, active: bool) -> Result<(), Error> {
+        let admin = storage::try_get_admin(&env)?;
+        admin.require_auth();
+        storage::set_emergency(&env, active);
+        let now = env.ledger().timestamp();
+        let mut data = Vec::new(&env);
+        data.push_back(admin.clone().into_val(&env));
+        data.push_back(active.into_val(&env));
+        data.push_back(now.into_val(&env));
+        env.events().publish(
+            (symbol_short!("emergency"), admin.clone()),
+            NebulaEvent {
+                version: 2,
+                timestamp: now,
+                action: symbol_short!("emergency"),
+                data,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn is_emergency_mode(env: Env) -> bool {
+        storage::is_emergency(&env)
+    }
+
+    // ----------------------------------------------------------------
     // Issue: Migration Pause — granular security control
     // ----------------------------------------------------------------
 
@@ -1434,6 +1466,13 @@ impl Contract {
         Ok(())
     }
 
+    fn require_not_emergency(env: &Env) -> Result<(), Error> {
+        if storage::is_emergency(env) {
+            return Err(Error::EmergencyMode);
+        }
+        Ok(())
+    }
+
     /// If a compliance oracle is configured, verify `addr` is not flagged.
     fn require_compliant(env: &Env, addr: &Address) -> Result<(), Error> {
         if let Some(oracle_addr) = storage::get_compliance_oracle(env) {
@@ -1469,6 +1508,7 @@ impl Contract {
 
     pub fn create_stream(env: Env, args: StreamArgs) -> Result<u64, Error> {
         Self::require_not_paused(&env)?;
+        Self::require_not_emergency(&env)?;
         args.sender.require_auth();
         Self::require_asset_whitelisted(&env, &args.token)?;
 
