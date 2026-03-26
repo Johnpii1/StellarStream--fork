@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { ShieldAlert, ArrowLeftRight } from "lucide-react";
 import { useProtocolStatus } from "@/lib/use-protocol-status";
 import PrivacyShieldToggle from "@/components/privacy-shield-toggle";
+import { TransactionPrioritySelector } from "@/components/transaction-priority-selector";
+import { useTransactionPriority, type PriorityTier } from "@/lib/use-transaction-priority";
 import SwapAndStream from "@/components/swap-and-stream";
 import { InsufficientXLMCard, NetworkCongestedCard } from "@/components/error-recovery-cards";
 import type { RecoveryErrorType } from "@/components/error-recovery-cards";
@@ -704,6 +706,8 @@ function Step3({
   form,
   onSign,
   signing,
+  priorityTier,
+  onPriorityChange,
   recoveryError,
   onDismissRecovery,
   onAcceptFee,
@@ -712,6 +716,8 @@ function Step3({
   form: FormData;
   onSign: () => void;
   signing: boolean;
+  priorityTier: PriorityTier;
+  onPriorityChange: (id: PriorityTier) => void;
   recoveryError?: RecoveryErrorType | null;
   onDismissRecovery?: () => void;
   onAcceptFee?: (fee: number) => void;
@@ -781,6 +787,10 @@ function Step3({
         </p>
       </div>
 
+      <TransactionPrioritySelector
+        selected={priorityTier}
+        onChange={onPriorityChange}
+      />
       {/* ── Recovery cards ── */}
       {recoveryError === "insufficient-xlm" && (
         <InsufficientXLMCard
@@ -892,6 +902,9 @@ export default function CreateStreamPage() {
   const [recoveryError, setRecoveryError] = useState<RecoveryErrorType | null>(null);
   const [signAttempts, setSignAttempts] = useState(0);
 
+  // ── Transaction priority (#456) ──────────────────────────────────────────────
+  const { tier: priorityTier, setTierId: setPriorityTierId, totalFeeStroops } = useTransactionPriority();
+
   // ── Emergency gate (#426) ────────────────────────────────────────────────────
   const { isEmergency } = useProtocolStatus();
 
@@ -938,6 +951,10 @@ export default function CreateStreamPage() {
 
   const handleSign = async () => {
     setSigning(true);
+    // totalFeeStroops(0) gives the fee with no simulated resource fee.
+    // In production, pass the real simulated resource fee here.
+    const feeStoops = totalFeeStroops(0);
+    console.info(`[CreateStream] Submitting with fee: ${feeStoops} stroops (priority: ${priorityTier.id})`);
     setRecoveryError(null);
     await new Promise((r) => setTimeout(r, 2200));
     setSigning(false);
@@ -1051,6 +1068,7 @@ export default function CreateStreamPage() {
 
                   {step === 1 && <Step1 form={form} update={update} />}
                   {step === 2 && <Step2 form={form} update={update} />}
+                  {step === 3 && <Step3 form={form} onSign={handleSign} signing={signing} priorityTier={priorityTier.id} onPriorityChange={setPriorityTierId} />}
                   {step === 3 && <Step3 form={form} onSign={handleSign} signing={signing} recoveryError={recoveryError} onDismissRecovery={() => setRecoveryError(null)} onAcceptFee={handleAcceptFee} onSwapToXLM={() => { setStep(1); setAnimKey((k) => k + 1); }} />}
 
                   {step < 3 && (
