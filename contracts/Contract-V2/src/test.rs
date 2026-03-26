@@ -5,7 +5,7 @@ use crate::types::{PermitArgs, StreamArgs};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::TokenClient,
-    vec, Address, Env,
+    Address, Env,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -384,6 +384,7 @@ fn test_permit_stream_fails_with_wrong_nonce() {
     let token_admin = Address::generate(&env);
     let (token_id, _, _) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Generate a dummy keypair (32-byte pubkey, 64-byte sig)
     let pubkey = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
@@ -422,6 +423,7 @@ fn test_permit_stream_fails_if_deadline_passed() {
     let token_admin = Address::generate(&env);
     let (token_id, _, _) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     let pubkey = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
     let bad_sig = soroban_sdk::BytesN::from_array(&env, &[0u8; 64]);
@@ -551,6 +553,7 @@ fn test_bump_active_streams_ttl_returns_count_of_existing() {
     let token_admin = Address::generate(&env);
     let (token_id, _, _) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Mint and approve tokens so migrate_stream can pull them
     let v1_id = {
@@ -684,6 +687,41 @@ fn test_get_min_value_returns_default() {
     assert_eq!(v2_client.get_min_value(&token), 100_000_000i128);
 }
 
+#[test]
+fn test_admin_can_manage_asset_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token = Address::generate(&env);
+    let (_, v2_client) = setup_v2(&env, &admin);
+
+    assert!(!v2_client.is_asset_whitelisted(&token));
+
+    v2_client.add_to_whitelist(&token);
+    assert!(v2_client.is_asset_whitelisted(&token));
+
+    v2_client.remove_from_whitelist(&token);
+    assert!(!v2_client.is_asset_whitelisted(&token));
+}
+
+#[test]
+fn test_create_stream_fails_for_non_whitelisted_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token_id, _, asset_client) = create_token(&env, &token_admin);
+    let (_, v2_client) = setup_v2(&env, &admin);
+
+    asset_client.mint(&sender, &100_000_000);
+
+    let result = v2_client.try_create_stream(&stream_args(&sender, &receiver, &token_id, 100_000_000));
+    assert_eq!(result, Err(Ok(Error::AssetNotWhitelisted)));
+}
+
 // ── Analytics / Protocol Health tests ────────────────────────────────────────
 
 #[test]
@@ -732,6 +770,7 @@ fn test_cliff_period_locks_funds() {
     let token_admin = Address::generate(&env);
     let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Mint tokens to sender
     asset_client.mint(&sender, &100_000_000);
@@ -791,6 +830,7 @@ fn test_v2_cancel_splits_funds() {
     let token_admin = Address::generate(&env);
     let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &100_000_000);
 
@@ -836,6 +876,7 @@ fn test_geometric_rate_unlock_math() {
     let token_admin = Address::generate(&env);
     let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &100_000_000);
 
@@ -918,6 +959,7 @@ fn test_create_batch_streams_success() {
     asset_client.mint(&sender, &1_000_000_000);
 
     let (v2_address, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Create batch of 2 streams
     let streams = soroban_sdk::vec![
@@ -993,6 +1035,7 @@ fn test_create_batch_streams_max_limit() {
     let (token_id, _, _) = create_token(&env, &token_admin);
 
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Create 11 streams (exceeds limit)
     let mut streams = Vec::new(&env);
@@ -1035,6 +1078,7 @@ fn test_create_batch_streams_atomic_failure() {
     asset_client.mint(&sender, &200_000_000);
 
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Create batch with total amount exceeding balance (100M + 110M = 210M > 200M)
     let streams = soroban_sdk::vec![
@@ -1173,6 +1217,7 @@ fn test_get_active_volume_single_stream_as_receiver() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &100_000_000);
 
@@ -1211,6 +1256,7 @@ fn test_get_active_volume_single_stream_as_sender() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &100_000_000);
 
@@ -1248,6 +1294,7 @@ fn test_get_active_volume_multiple_streams() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &600_000_000);
 
@@ -1322,6 +1369,7 @@ fn test_get_active_volume_after_partial_withdrawal() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &100_000_000);
 
@@ -1364,6 +1412,7 @@ fn test_get_active_volume_excludes_cancelled_streams() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &200_000_000);
 
@@ -1425,6 +1474,7 @@ fn test_get_active_volume_unrelated_user_returns_zero() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &100_000_000);
 
@@ -1477,6 +1527,7 @@ fn test_get_active_volume_mixed_roles() {
     let token_admin = Address::generate(&env);
     let (token_id, _, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&user, &200_000_000);
     asset_client.mint(&other1, &200_000_000);
@@ -1536,6 +1587,7 @@ fn test_rebalance_after_clawback() {
     let token_admin = Address::generate(&env);
     let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     asset_client.mint(&sender, &1000_000_000);
 
@@ -1648,6 +1700,7 @@ fn test_yield_bearing_stream() {
     let token_admin = Address::generate(&env);
     let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
     let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.add_to_whitelist(&token_id);
 
     // Register Mock Vault
     let vault_id = env.register_contract(None, MockVault);

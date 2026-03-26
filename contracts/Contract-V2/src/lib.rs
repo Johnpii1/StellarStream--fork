@@ -753,6 +753,11 @@ impl Contract {
         Ok(())
     }
 
+    fn require_asset_whitelisted(env: &Env, asset: &Address) -> Result<(), Error> {
+        if !storage::is_asset_whitelisted(env, asset) {
+            return Err(Error::AssetNotWhitelisted);
+        }
+        Ok(())
     fn apply_protocol_fee(env: &Env, token: &Address, total_amount: i128) -> Result<i128, Error> {
         let fee_bps = storage::get_fee_bps(env);
         if fee_bps == 0 {
@@ -771,6 +776,7 @@ impl Contract {
     pub fn create_stream(env: Env, args: StreamArgs) -> Result<u64, Error> {
         Self::require_not_paused(&env)?;
         args.sender.require_auth();
+        Self::require_asset_whitelisted(&env, &args.token)?;
 
         if args.start_time >= args.end_time
             || args.cliff_time < args.start_time
@@ -860,6 +866,7 @@ impl Contract {
         signature: soroban_sdk::BytesN<64>,
     ) -> Result<u64, Error> {
         Self::require_not_paused(&env)?;
+        Self::require_asset_whitelisted(&env, &args.token)?;
         let now = env.ledger().timestamp();
 
         if now > args.deadline {
@@ -991,6 +998,7 @@ impl Contract {
             if args.sender != sender {
                 return Err(Error::UnauthorizedSender);
             }
+            Self::require_asset_whitelisted(&env, &args.token)?;
 
             // Validate time ranges
             if args.start_time >= args.end_time
@@ -1272,6 +1280,22 @@ impl Contract {
         storage::try_get_admin(&env)?.require_auth();
         storage::set_fee_bps(&env, bps);
         Ok(())
+    }
+
+    pub fn add_to_whitelist(env: Env, asset: Address) -> Result<(), Error> {
+        storage::try_get_admin(&env)?.require_auth();
+        storage::add_to_whitelist(&env, &asset);
+        Ok(())
+    }
+
+    pub fn remove_from_whitelist(env: Env, asset: Address) -> Result<(), Error> {
+        storage::try_get_admin(&env)?.require_auth();
+        storage::remove_from_whitelist(&env, &asset);
+        Ok(())
+    }
+
+    pub fn is_asset_whitelisted(env: Env, asset: Address) -> bool {
+        storage::is_asset_whitelisted(&env, &asset)
     }
 
     /// Get the current protocol fee in basis points.

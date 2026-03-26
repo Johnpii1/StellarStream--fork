@@ -33,4 +33,6 @@ pub enum Error {
     NotRecurrent = 27,
     /// No treasury address configured; admin must call set_treasury first
     NoTreasury = 28,
+    /// Token is not approved for V2 stream creation
+    AssetNotWhitelisted = 29,
 }
