@@ -90,6 +90,9 @@ pub enum DataKeyV2 {
     /// Counter for generating unique pending stream request IDs
     StreamRequestCount, // 14
 
+    // -- Compliance Oracle (Issue #412) ---------------------------
+    /// Address of the compliance oracle contract
+    ComplianceOracle, // 15
     // -- Emergency Mode (Issue #393) ---------------------------------
     /// When true, create_stream and top_up are blocked; withdraw remains accessible.
     Emergency, // 15
@@ -689,76 +692,18 @@ pub fn remove_pending_stream_request(env: &Env, request_id: u64) {
 }
 
 // ----------------------------------------------------------------
-// Nebula-DAO Vote-Weight Integration (Issue: Governance)
+// Compliance Oracle helpers (Issue #412)
 // ----------------------------------------------------------------
 
-pub fn set_dao_token(env: &Env, token: &Address) {
-    env.storage().instance().set(&DataKeyV2::DaoToken, token);
+/// Set the compliance oracle address. Admin-only enforcement is in lib.rs.
+pub fn set_compliance_oracle(env: &Env, oracle: &Address) {
+    env.storage().instance().set(&DataKeyV2::ComplianceOracle, oracle);
     bump_instance(env);
 }
 
-pub fn get_dao_token(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKeyV2::DaoToken)
-}
-
-pub fn set_voting_threshold(env: &Env, threshold: i128) {
-    env.storage().instance().set(&DataKeyV2::VotingThreshold, &threshold);
-    bump_instance(env);
-}
-
-pub fn get_voting_threshold(env: &Env) -> i128 {
-    env.storage()
-        .instance()
-        .get(&DataKeyV2::VotingThreshold)
-        .unwrap_or(0)
-}
-
-// ----------------------------------------------------------------
-// Timelocked Treasury Splits (Issue: Governance Security)
-// ----------------------------------------------------------------
-
-/// A pending treasury split waiting out the 48-hour timelock.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PendingTreasurySplit {
-    pub initiator: Address,
-    pub token: Address,
-    pub recipients: Vec<Address>,
-    pub amounts: Vec<i128>,
-    pub unlock_time: u64,
-    pub executed: bool,
-}
-
-pub fn next_treasury_split_id(env: &Env) -> u64 {
-    let id: u64 = env
-        .storage()
-        .instance()
-        .get(&DataKeyV2::TreasurySplitCount)
-        .unwrap_or(0);
-    env.storage()
-        .instance()
-        .set(&DataKeyV2::TreasurySplitCount, &(id + 1));
-    id
-}
-
-pub fn set_pending_treasury_split(env: &Env, split_id: u64, split: &PendingTreasurySplit) {
-    env.storage()
-        .instance()
-        .set(&DataKeyV2::PendingTreasurySplit(split_id), split);
-    bump_instance(env);
-}
-
-pub fn get_pending_treasury_split(env: &Env, split_id: u64) -> Option<PendingTreasurySplit> {
-    env.storage()
-        .instance()
-        .get(&DataKeyV2::PendingTreasurySplit(split_id))
-}
-
-pub fn clear_pending_treasury_split(env: &Env, split_id: u64) {
-    env.storage()
-        .instance()
-        .remove(&DataKeyV2::PendingTreasurySplit(split_id));
-    bump_instance(env);
+/// Return the compliance oracle address, if configured.
+pub fn get_compliance_oracle(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKeyV2::ComplianceOracle)
 }
 
 // ----------------------------------------------------------------
