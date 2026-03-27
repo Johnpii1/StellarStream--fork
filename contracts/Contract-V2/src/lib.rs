@@ -35,6 +35,9 @@ const CONTRACT_METADATA_HASH: [u8; 32] = [
     0xa3, 0xbf, 0x4f, 0x1b, 0x2b, 0x0b, 0x82, 0x2c, 0xd1, 0x5d, 0x6c, 0x15, 0xb0, 0xf0, 0x0a, 0x08,
 ];
 
+/// Gas buffer fee per `split_multi_asset` execution (1 XLM = 10_000_000 stroops).
+const GAS_FEE_PER_SPLIT_STROOPS: i128 = 10_000_000;
+
 /// Maximum protocol fee (5%) - protects users from admin abuse (Issue #415)
 pub const MAX_FEE_BPS: u32 = 500;
 
@@ -3856,6 +3859,14 @@ impl Contract {
         // Issue #603 — reentrancy guard
         storage::acquire_lock(&env)?;
 
+        // Issue #632 — gas buffer check.
+        let current_gas = storage::get_gas_buffer(&env, &from);
+        if current_gas < GAS_FEE_PER_SPLIT_STROOPS {
+            storage::release_lock(&env);
+            return Err(Error::InsufficientGasBuffer);
+        }
+        storage::set_gas_buffer(&env, &from, current_gas - GAS_FEE_PER_SPLIT_STROOPS);
+
         // Issue #604 — hoist all storage reads before the loop
         let fee_per_recipient = storage::get_fee_per_recipient(&env);
         let fee_collector = if fee_per_recipient > 0 {
@@ -3953,6 +3964,57 @@ impl Contract {
     /// Get the current per-recipient fee amount.
     pub fn get_fee_per_recipient(env: Env) -> i128 {
         storage::get_fee_per_recipient(&env)
+    }
+
+    // ----------------------------------------------------------------
+    // Issue #632 — Gas-Tank Internal XLM Buffer
+    // ----------------------------------------------------------------
+
+    pub fn deposit_gas_buffer(env: Env, sender: Address, amount: i128) -> Result<(), Error> {
+        sender.require_auth();
+        if amount <= 0 {
+            return Err(Error::BelowDustThreshold);
+        }
+
+        let fee_token = storage::get_fee_token(&env).ok_or(Error::NoTreasury)?;
+        let token_client = soroban_sdk::token::TokenClient::new(&env, &fee_token);
+
+        token_client.transfer(&sender, &env.current_contract_address(), &amount);
+
+        let current = storage::get_gas_buffer(&env, &sender);
+        storage::set_gas_buffer(&env, &sender, current.checked_add(amount).ok_or(Error::Overflow)?);
+
+        Ok(())
+    }
+
+    pub fn withdraw_gas_buffer(
+        env: Env,
+        admin: Address,
+        amount: i128,
+        to: Address,
+    ) -> Result<(), Error> {
+        storage::try_get_admin(&env)?.require_auth();
+
+        if amount <= 0 {
+            return Err(Error::BelowDustThreshold);
+        }
+
+        let current = storage::get_gas_buffer(&env, &admin);
+        if current < amount {
+            return Err(Error::InsufficientGasBuffer);
+        }
+
+        storage::set_gas_buffer(&env, &admin, current - amount);
+
+        let fee_token = storage::get_fee_token(&env).ok_or(Error::NoTreasury)?;
+        let token_client = soroban_sdk::token::TokenClient::new(&env, &fee_token);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
+
+        Ok(())
+    }
+
+    pub fn get_gas_buffer_balance(env: Env, user: Address) -> i128 {
+        storage::get_gas_buffer(&env, &user)
     }
 }
 

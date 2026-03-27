@@ -1284,6 +1284,83 @@ fn test_create_stream_with_fee_requires_treasury() {
 }
 
 #[test]
+fn test_gas_buffer_deposit_withdraw_and_query() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
+
+    asset_client.mint(&admin, &1_000_000_000);
+
+    let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.set_fee_token(&token_id);
+
+    // Initial buffer is empty.
+    assert_eq!(v2_client.get_gas_buffer_balance(&admin), 0);
+
+    // Deposit 100M stroops into sender's buffer.
+    let deposit_amount = 100_000_000;
+    v2_client.deposit_gas_buffer(&admin, &deposit_amount).unwrap();
+    assert_eq!(v2_client.get_gas_buffer_balance(&admin), deposit_amount);
+
+    // Withdraw 40M to beneficiary.
+    v2_client
+        .withdraw_gas_buffer(&admin, &40_000_000, &beneficiary)
+        .unwrap();
+    assert_eq!(v2_client.get_gas_buffer_balance(&admin), 60_000_000);
+    assert_eq!(token_client.balance(&beneficiary), 40_000_000);
+}
+
+#[test]
+fn test_split_multi_asset_requires_gas_buffer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let receiver1 = Address::generate(&env);
+    let receiver2 = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token_id, token_client, asset_client) = create_token(&env, &token_admin);
+
+    asset_client.mint(&sender, &1_000_000_000);
+
+    let (_, v2_client) = setup_v2(&env, &admin);
+    v2_client.set_fee_token(&token_id);
+
+    let recipients = soroban_sdk::vec![
+        &env,
+        crate::types::MultiAssetRecipient {
+            address: receiver1.clone(),
+            asset: token_id.clone(),
+            amount: 100_000_000,
+        },
+        crate::types::MultiAssetRecipient {
+            address: receiver2.clone(),
+            asset: token_id.clone(),
+            amount: 100_000_000,
+        },
+    ];
+
+    // Without gas buffer, split should fail.
+    let result = v2_client.try_split_multi_asset(&sender, &recipients);
+    assert_eq!(result, Err(Ok(Error::InsufficientGasBuffer)));
+
+    // Fund sender buffer and retry.
+    asset_client.mint(&sender, &100_000_000);
+    v2_client.deposit_gas_buffer(&sender, &GAS_FEE_PER_SPLIT_STROOPS).unwrap();
+
+    v2_client.split_multi_asset(&sender, &recipients).unwrap();
+
+    assert_eq!(token_client.balance(&receiver1), 100_000_000);
+    assert_eq!(token_client.balance(&receiver2), 100_000_000);
+    assert_eq!(v2_client.get_gas_buffer_balance(&sender), 0);
+}
+
+#[test]
 fn test_withdraw_treasury_transfers_pending_fees() {
     let env = Env::default();
     env.mock_all_auths();
