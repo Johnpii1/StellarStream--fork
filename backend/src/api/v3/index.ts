@@ -1,14 +1,25 @@
 import { Router } from "express";
 import { responseWrapper } from "../../middleware/responseWrapper.js";
+import { orgPolicyMiddleware } from "../../middleware/orgPolicy.js";
+import { draftRateLimitMiddleware } from "../../middleware/draftRateLimit.js";
 import disbursementFileRouter from "./disbursement-file.routes.js";
 import safeVaultRouter from "./safe-vault.routes.js";
 import historyRouter from "./history.routes.js";
+import invoiceReportRouter from "./invoice-report.routes.js";
 
 const router = Router();
 
 router.use(responseWrapper);
+
+// #848 — per-org rate limit on all V3 split-draft endpoints
+router.use("/process-disbursement-file", draftRateLimitMiddleware);
+
+// #844 — organisation policy validation on split submissions
+router.use("/process-disbursement-file", orgPolicyMiddleware);
+
 router.use(disbursementFileRouter);
 router.use(safeVaultRouter);
 router.use(historyRouter);
+router.use(invoiceReportRouter);
 
 export default router;
