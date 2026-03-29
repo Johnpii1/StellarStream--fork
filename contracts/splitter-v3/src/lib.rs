@@ -23,6 +23,14 @@ pub struct Recipient {
     pub share_bps: u32,
 }
 
+/// A recipient with a percentage share expressed in basis points for `split_percentage`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PercentRecipient {
+    pub address: Address,
+    pub bps: u32,
+}
+
 /// The protocol setting being changed by a quorum proposal.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -641,6 +649,125 @@ impl SplitterV3 {
             .persistent()
             .get(&DataKey::ClaimableBalance(recipient, asset))
             .unwrap_or(0)
+    }
+
+    // ── split_funds: security-guarded batch transfer ──────────────────────────
+
+    /// Authenticated batch transfer: sender authorizes the entire batch,
+    /// asset is validated as a live token contract, and recipients must be non-empty.
+    pub fn split_funds(
+        env: Env,
+        sender: Address,
+        asset: Address,
+        recipients: Vec<Recipient>,
+        total_amount: i128,
+    ) -> Result<(), Error> {
+        // Security: sender must authorize the full batch.
+        sender.require_auth();
+
+        // Security: recipients list must not be empty.
+        if recipients.is_empty() {
+            return Err(Error::EmptyRecipients);
+        }
+
+        // Security: validate asset is a live token contract by calling decimals().
+        // This traps early if the address is not a valid deployed contract.
+        let token_client = token::Client::new(&env, &asset);
+        let _ = token_client.decimals();
+
+        let contract_addr = env.current_contract_address();
+        token_client.transfer(&sender, &contract_addr, &total_amount);
+
+        for r in recipients.iter() {
+            let amount = total_amount
+                .checked_mul(r.share_bps as i128)
+                .ok_or(Error::Overflow)?
+                / 10_000;
+            if amount > 0 {
+                token_client.transfer(&contract_addr, &r.address, &amount);
+            }
+        }
+
+        Ok(())
+    }
+
+    // ── split_percentage: percentage-based split ──────────────────────────────
+
+    /// Split `total_amount` of `asset` among `recipients` using basis-point
+    /// percentages.  The sum of all `bps` values must equal exactly 10_000.
+    pub fn split_percentage(
+        env: Env,
+        sender: Address,
+        asset: Address,
+        total_amount: i128,
+        recipients: Vec<PercentRecipient>,
+    ) -> Result<(), Error> {
+        sender.require_auth();
+
+        if recipients.is_empty() {
+            return Err(Error::EmptyRecipients);
+        }
+
+        // Validate bps sum == 10_000.
+        let mut bps_sum: u32 = 0;
+        for r in recipients.iter() {
+            bps_sum = bps_sum.checked_add(r.bps).ok_or(Error::Overflow)?;
+        }
+        if bps_sum != 10_000 {
+            return Err(Error::InvalidBpsSum);
+        }
+
+        let token_client = token::Client::new(&env, &asset);
+        let contract_addr = env.current_contract_address();
+        token_client.transfer(&sender, &contract_addr, &total_amount);
+
+        // Emit SplitStarted event with sender and total recipient count.
+        env.events().publish(
+            (symbol_short!("splitstrt"), sender.clone()),
+            recipients.len() as u32,
+        );
+
+        // Distribute to all recipients except the first, tracking total disbursed.
+        let mut total_disbursed: i128 = 0;
+        let first = recipients.get(0).unwrap();
+
+        for i in 1..recipients.len() {
+            let r = recipients.get(i).unwrap();
+            let amount = total_amount
+                .checked_mul(r.bps as i128)
+                .ok_or(Error::Overflow)?
+                / 10_000;
+            if amount > 0 {
+                token_client.transfer(&contract_addr, &r.address, &amount);
+                env.events().publish(
+                    (symbol_short!("paysent"), r.address.clone()),
+                    amount,
+                );
+            }
+            total_disbursed = total_disbursed.checked_add(amount).ok_or(Error::Overflow)?;
+        }
+
+        // First recipient absorbs any rounding dust so contract balance is exactly zero.
+        let first_base = total_amount
+            .checked_mul(first.bps as i128)
+            .ok_or(Error::Overflow)?
+            / 10_000;
+        let dust = total_amount
+            .checked_sub(total_disbursed)
+            .ok_or(Error::Overflow)?
+            .checked_sub(first_base)
+            .ok_or(Error::Overflow)?;
+        let first_amount = first_base.checked_add(dust).ok_or(Error::Overflow)?;
+
+        if first_amount > 0 {
+            token_client.transfer(&contract_addr, &first.address, &first_amount);
+            env.events().publish(
+                (symbol_short!("paysent"), first.address.clone()),
+                first_amount,
+            );
+        }
+
+        Ok(())
     }
 
     // ── Views ─────────────────────────────────────────────────────────────────
