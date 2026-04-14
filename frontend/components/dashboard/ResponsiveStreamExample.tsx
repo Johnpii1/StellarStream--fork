@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { ResponsiveStreamView } from "./ResponsiveStreamView";
 
 /**
@@ -64,7 +65,25 @@ const EXAMPLE_STREAMS = [
   },
 ];
 
+const EXAMPLE_SHIPS = [
+  { name: "Artemis Voyager", internationalCallSign: "WDEH" },
+  { name: "Northwind Carrier", internationalCallSign: "9HA5934" },
+  { name: "Pacific Lumen", internationalCallSign: "VRQX7" },
+  { name: "Stellar Horizon", internationalCallSign: "3FSR8" },
+];
+
 export default function ResponsiveStreamExample() {
+  const [callSignQuery, setCallSignQuery] = useState("");
+
+  const filteredShips = useMemo(() => {
+    const normalizedQuery = callSignQuery.trim().toLowerCase();
+    if (!normalizedQuery) return EXAMPLE_SHIPS;
+
+    return EXAMPLE_SHIPS.filter((ship) =>
+      ship.internationalCallSign.toLowerCase().includes(normalizedQuery)
+    );
+  }, [callSignQuery]);
+
   const handleWithdraw = (streamId: string) => {
     // Implement withdrawal logic
   };
@@ -96,6 +115,42 @@ export default function ResponsiveStreamExample() {
           Manage your active payment streams with mobile-optimized controls
         </p>
       </div>
+
+      <section className="mb-6 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+        <div className="mb-3">
+          <h2 className="font-heading text-lg text-white">Ship lookup</h2>
+          <p className="font-body text-xs text-white/60">
+            Search vessels by international call sign.
+          </p>
+        </div>
+
+        <input
+          value={callSignQuery}
+          onChange={(event) => setCallSignQuery(event.target.value)}
+          type="text"
+          placeholder="e.g. 9HA5934"
+          className="w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/35 focus:border-cyan-400/60 focus:outline-none"
+          aria-label="Search ships by international call sign"
+        />
+
+        <ul className="mt-3 space-y-2">
+          {filteredShips.length > 0 ? (
+            filteredShips.map((ship) => (
+              <li
+                key={ship.internationalCallSign}
+                className="flex items-center justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2"
+              >
+                <span className="font-body text-sm text-white/85">{ship.name}</span>
+                <span className="font-mono text-xs text-cyan-300">{ship.internationalCallSign}</span>
+              </li>
+            ))
+          ) : (
+            <li className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/55">
+              No ships match that call sign.
+            </li>
+          )}
+        </ul>
+      </section>
 
       <ResponsiveStreamView
         streams={EXAMPLE_STREAMS}
